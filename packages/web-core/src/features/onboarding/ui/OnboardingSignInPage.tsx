@@ -9,6 +9,7 @@ import {
 } from '@/shared/dialogs/global/OAuthDialog';
 import { usePostHog } from 'posthog-js/react';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
+import { useAuth } from '@/shared/hooks/auth/useAuth';
 import { useTheme } from '@/shared/hooks/useTheme';
 import { OAuthSignInButton } from '@vibe/ui/components/OAuthButtons';
 import { PrimaryButton } from '@vibe/ui/components/PrimaryButton';
@@ -128,6 +129,16 @@ export function OnboardingSignInPage() {
     });
     hasTrackedStageViewRef.current = true;
   }, [config, isLoggedIn, loading, trackRemoteOnboardingEvent]);
+
+  const { isSignedIn } = useAuth();
+
+  // Auto-complete onboarding when already signed in (e.g. local development mode)
+  useEffect(() => {
+    if (!config || !isSignedIn || isCompletingOnboardingRef.current) return;
+    if (config.remote_onboarding_acknowledged) return;
+
+    finishOnboarding({ method: 'skip_sign_in' });
+  }, [config, isSignedIn]);
 
   useEffect(() => {
     if (!config?.remote_onboarding_acknowledged) {

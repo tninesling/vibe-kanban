@@ -4,6 +4,7 @@ import {
   useParams,
   useLocation,
 } from '@tanstack/react-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { Provider as NiceModalProvider } from '@ebay/nice-modal-react';
 import { SequenceTrackerProvider } from '@/shared/keyboard/SequenceTracker';
 import { SequenceIndicator } from '@/shared/keyboard/SequenceIndicator';
@@ -21,6 +22,10 @@ import { ActionsProvider } from '@/shared/providers/ActionsProvider';
 import { useWorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
 import { SharedAppLayout } from '@/shared/components/ui-new/containers/SharedAppLayout';
+import { organizationKeys } from '@/shared/hooks/organizationKeys';
+import { LocalOrgProvider, SEED_ORG_ID } from '@/shared/providers/local/LocalOrgProvider';
+import type { ListOrganizationsResponse, OrganizationWithRole } from 'shared/types';
+import { MemberRole } from 'shared/types';
 
 function KeyboardShortcutsHandler() {
   useKeyShowHelp(
@@ -103,6 +108,25 @@ function AppRouteProviders({ children }: { children: ReactNode }) {
 
 function AppLayoutRouteComponent() {
   const { hostId } = useParams({ strict: false });
+  const queryClient = useQueryClient();
+
+  // Seed organization data for local development (bypasses remote API)
+  useEffect(() => {
+    const seedOrg: OrganizationWithRole = {
+      id: SEED_ORG_ID,
+      name: 'Local Dev Organization',
+      slug: 'local-dev',
+      is_personal: false,
+      issue_prefix: 'DEV',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      user_role: MemberRole.ADMIN,
+    };
+    const seedData: ListOrganizationsResponse = {
+      organizations: [seedOrg],
+    };
+    queryClient.setQueryData(organizationKeys.userList(), seedData);
+  }, [queryClient]);
 
   return (
     <AppRouteProviders key={hostId ?? 'local'}>
@@ -111,7 +135,9 @@ function AppLayoutRouteComponent() {
         <SequenceIndicator />
         <KeyboardShortcutsHandler />
         <TerminalProvider>
-          <SharedAppLayout />
+          <LocalOrgProvider>
+            <SharedAppLayout />
+          </LocalOrgProvider>
         </TerminalProvider>
       </SequenceTrackerProvider>
     </AppRouteProviders>

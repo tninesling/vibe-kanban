@@ -1,0 +1,46 @@
+services:
+  vibe-kanban:
+    build: .
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      # Seed data (read-only, used on first run)
+      - ./dev_assets_seed:/seed:ro
+      # Persistent app data (config, database, credentials, etc.)
+      - vibe-kanban-data:/home/appuser/.local/share/vibe-kanban
+      # Repo worktrees (optional, for agent workspace support)
+      - vibe-kanban-repos:/repos
+    environment:
+      - HOST=0.0.0.0
+      - BACKEND_PORT=3000
+      - PORT=3000
+      - HOME=/home/appuser
+      - VK_ALLOWED_ORIGINS=${VK_ALLOWED_ORIGINS:-http://localhost:3000}
+      - VK_SHARED_API_BASE=${VK_SHARED_API_BASE:-}
+      - VK_TUNNEL=${VK_TUNNEL:-}
+      - DISABLE_WORKTREE_CLEANUP=${DISABLE_WORKTREE_CLEANUP:-1}
+      - RUST_LOG=${RUST_LOG:-info}
+    user: root
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mkdir -p "/home/appuser/.local/share/vibe-kanban"
+        chown appuser:appuser "/home/appuser/.local/share/vibe-kanban" /repos
+        if [ ! -f "/home/appuser/.local/share/vibe-kanban/db.sqlite" ]; then
+          echo "Seeding database..."
+          cp -r /seed/. "/home/appuser/.local/share/vibe-kanban/"
+          chown -R appuser:appuser "/home/appuser/.local/share/vibe-kanban"
+        fi
+        exec /usr/bin/su -p -s /bin/sh appuser -c "/usr/bin/tini -- /usr/local/bin/server"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  vibe-kanban-data:
+  vibe-kanban-repos:

@@ -31,7 +31,6 @@ import { useCurrentAppDestination } from '@/shared/hooks/useCurrentAppDestinatio
 import {
   getDestinationHostId,
   getProjectDestination,
-  isProjectDestination,
   isLocalWorkspacesDestination,
 } from '@/shared/lib/routes/appNavigation';
 import {
@@ -54,7 +53,7 @@ import { AppBarNotificationBellContainer } from '@/pages/workspaces/AppBarNotifi
 import { WorkspacesSidebarContainer } from '@/pages/workspaces/WorkspacesSidebarContainer';
 import { WorkspacesSidebarReopenTag } from '@vibe/ui/components/WorkspacesSidebar';
 import { useRemoteCloudHostsAppBarModel } from '@/shared/hooks/useRemoteCloudHosts';
-import { CloudShutdownExportBanner } from '@/shared/components/CloudShutdownExportBanner';
+import { useOrgContext, type OrgContextValue } from '@/shared/hooks/useOrgContext';
 
 export function SharedAppLayout() {
   const appNavigation = useAppNavigation();
@@ -120,6 +119,15 @@ export function SharedAppLayout() {
     }
   }, [organizations, selectedOrgId, setSelectedOrgId]);
 
+  // Use local OrgContext project data as fallback when Electric sync is unavailable
+  let localOrgContext: OrgContextValue | null = null;
+  try {
+    localOrgContext = useOrgContext();
+  } catch {
+    // OrgContext not available (e.g. remote mode) — use Electric shapes
+  }
+  const localProjects = localOrgContext?.projects ?? [];
+
   const projectParams = useMemo(
     () => ({ organization_id: selectedOrgId || '' }),
     [selectedOrgId]
@@ -129,12 +137,13 @@ export function SharedAppLayout() {
     isLoading,
     updateMany: updateManyProjects,
   } = useShape(PROJECTS_SHAPE, projectParams, {
-    enabled: isSignedIn && !!selectedOrgId,
+    enabled: isSignedIn && !!selectedOrgId && localProjects.length === 0,
     mutation: PROJECT_MUTATION,
   });
+  const sourceProjects = localProjects.length > 0 ? localProjects : orgProjects;
   const sortedProjects = useMemo(
-    () => sortProjectsByOrder(orgProjects),
-    [orgProjects]
+    () => sortProjectsByOrder(sourceProjects as RemoteProject[]),
+    [sourceProjects]
   );
   const [orderedProjects, setOrderedProjects] =
     useState<RemoteProject[]>(sortedProjects);
@@ -173,8 +182,7 @@ export function SharedAppLayout() {
   );
   const isWorkspacesActive = isLocalWorkspacesDestination(currentDestination);
   const isExportActive = currentDestination?.kind === 'export';
-  const showCloudShutdownBanner =
-    isExportActive || (isSignedIn && isProjectDestination(currentDestination));
+  const showCloudShutdownBanner = false;
   const isWorkspaceSidebarPreviewEnabled =
     !isMobile && isWorkspacesActive && !isLeftSidebarVisible;
   const activeProjectId = projectDestination?.projectId ?? null;
@@ -251,6 +259,22 @@ export function SharedAppLayout() {
   const handleCreateProject = useCallback(async () => {
     if (!selectedOrgId) return;
 
+    // In local mode (OrgContext available), create directly without the dialog
+    if (localOrgContext) {
+      const projectName = window.prompt('Project name:', 'New Project');
+      if (!projectName) return;
+
+      const result = localOrgContext.insertProject({
+        organization_id: selectedOrgId,
+        name: projectName,
+        color: '#6b7280',
+      });
+      result.persisted.then((created) => {
+        appNavigation.goToProject(created.id);
+      });
+      return;
+    }
+
     try {
       const result: CreateRemoteProjectResult =
         await CreateRemoteProjectDialog.show({ organizationId: selectedOrgId });
@@ -261,7 +285,7 @@ export function SharedAppLayout() {
     } catch {
       // Dialog cancelled
     }
-  }, [selectedOrgId, appNavigation]);
+  }, [selectedOrgId, appNavigation, localOrgContext]);
 
   const handleSignIn = useCallback(async () => {
     try {
@@ -313,11 +337,6 @@ export function SharedAppLayout() {
       >
         {!isMobile && (
           <>
-            {showCloudShutdownBanner && (
-              <div className="col-span-2">
-                <CloudShutdownExportBanner onClick={handleExportClick} />
-              </div>
-            )}
             {/* Desktop corner spacer. */}
             <div
               data-tauri-drag-region
@@ -405,9 +424,6 @@ export function SharedAppLayout() {
 
         {isMobile && (
           <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-            {showCloudShutdownBanner && (
-              <CloudShutdownExportBanner onClick={handleExportClick} />
-            )}
             <NavbarContainer
               mobileMode={isMobile}
               onOrgSelect={setSelectedOrgId}

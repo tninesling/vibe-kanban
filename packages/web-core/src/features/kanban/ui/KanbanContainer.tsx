@@ -28,10 +28,6 @@ import {
   useKanbanFilters,
   PRIORITY_ORDER,
 } from '../model/hooks/useKanbanFilters';
-import {
-  bulkUpdateIssues,
-  type BulkUpdateIssueItem,
-} from '@/shared/lib/remoteApi';
 import { PlusIcon, DotsThreeIcon } from '@phosphor-icons/react';
 import { Actions } from '@/shared/actions';
 import {
@@ -144,8 +140,12 @@ export function KanbanContainer() {
     getRelationshipsForIssue,
     issuesById,
     insertIssueTag,
+    updateIssue,
     removeIssueTag,
     insertTag,
+    insertStatus,
+    updateStatus,
+    removeStatus,
     pullRequests,
     isLoading: projectLoading,
   } = useProjectContext();
@@ -159,7 +159,21 @@ export function KanbanContainer() {
   const { userId } = useAuth();
 
   // Get project name by finding the project matching current projectId
-  const projectName = projects.find((p) => p.id === projectId)?.name ?? '';
+  const fromProjects = projects.find((p) => p.id === projectId)?.name ?? '';
+  const [projectName, setProjectName] = useState(fromProjects);
+  useEffect(() => {
+    if (fromProjects) {
+      setProjectName(fromProjects);
+    } else if (projectId) {
+      // Fallback: fetch project directly when context hasn't loaded yet
+      fetch(`/api/local/projects/${projectId}`)
+        .then((r) => r.json())
+        .then((body) => {
+          if (body.data?.name) setProjectName(body.data.name);
+        })
+        .catch(() => {});
+    }
+  }, [fromProjects, projectId]);
 
   const selectedKanbanIssueId = routeState.issueId;
   const issueComposerKey = useMemo(
@@ -706,7 +720,7 @@ export function KanbanContainer() {
       });
 
       // Build bulk updates for all issues in affected columns
-      const updates: BulkUpdateIssueItem[] = [];
+      const updates: { id: string; changes: Partial<import('shared/remote-types').UpdateIssueRequest> }[] = [];
 
       // Always update destination column
       const destIssueIds = newItems[destId] ?? [];
@@ -733,9 +747,11 @@ export function KanbanContainer() {
         });
       }
 
-      // Perform bulk update
+      // Perform bulk update via ProjectContext updateIssue
       isSyncingRef.current = true;
-      bulkUpdateIssues(updates)
+      Promise.all(
+        updates.map((u) => updateIssue(u.id, u.changes))
+      )
         .catch((err) => {
           console.error('Failed to bulk update sort order:', err);
         })
@@ -746,7 +762,7 @@ export function KanbanContainer() {
           }, 500);
         });
     },
-    [kanbanFilters.sortField, calculateSortOrder]
+    [kanbanFilters.sortField, calculateSortOrder, updateIssue]
   );
 
   // Multi-select support
@@ -864,6 +880,33 @@ export function KanbanContainer() {
     },
     [getTagsForIssue, insertIssueTag, removeIssueTag]
   );
+
+  const handleRenameStatus = useCallback(
+    (statusId: string, currentName: string) => {
+      const name = window.prompt('Rename column', currentName);
+      if (name && name !== currentName) {
+        updateStatus(statusId, { name });
+      }
+    },
+    [updateStatus]
+  );
+
+  const handleDeleteStatus = useCallback(
+    (statusId: string, statusName: string) => {
+      if (window.confirm(`Delete column "${statusName}"?`)) {
+        removeStatus(statusId);
+      }
+    },
+    [removeStatus]
+  );
+
+  const handleAddColumn = useCallback(() => {
+    const name = window.prompt('New column name', 'New Column');
+    if (name) {
+      const maxOrder = statuses.reduce((max, s) => Math.max(max, s.sort_order), -1);
+      insertStatus({ project_id: projectId, name, color: '#6b7280', sort_order: maxOrder + 1, hidden: false });
+    }
+  }, [statuses, projectId, insertStatus]);
 
   const getResolvedRelationshipsForIssue = useCallback(
     (issueId: string) =>
@@ -996,14 +1039,35 @@ export function KanbanContainer() {
                           />
                           <p className="m-0 text-sm">{status.name}</p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleAddTask(status.id)}
-                          className="p-half rounded-sm text-low hover:text-normal hover:bg-secondary transition-colors"
-                          aria-label="Add task"
-                        >
-                          <PlusIcon className="size-icon-xs" weight="bold" />
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleAddTask(status.id)}
+                            className="p-half rounded-sm text-low hover:text-normal hover:bg-secondary transition-colors"
+                            aria-label="Add task"
+                          >
+                            <PlusIcon className="size-icon-xs" weight="bold" />
+                          </button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                type="button"
+                                className="p-half rounded-sm text-low hover:text-normal hover:bg-secondary transition-colors"
+                                aria-label="Column menu"
+                              >
+                                <DotsThreeIcon className="size-icon-xs" weight="bold" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleRenameStatus(status.id, status.name)}>
+                                Rename
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleDeleteStatus(status.id, status.name)}>
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </div>
                     </KanbanHeader>
                     <KanbanCards id={status.id}>
@@ -1122,6 +1186,16 @@ export function KanbanContainer() {
                   </KanbanBoard>
                 );
               })}
+              <div className="flex items-start pt-4 pl-4">
+                <button
+                  type="button"
+                  onClick={handleAddColumn}
+                  className="flex items-center gap-2 px-4 py-3 rounded-lg border-2 border-dashed border-border text-low hover:text-normal hover:border-foreground/30 transition-colors whitespace-nowrap"
+                >
+                  <PlusIcon className="size-icon-sm" weight="bold" />
+                  <span className="text-sm">Add column</span>
+                </button>
+              </div>
             </KanbanProvider>
           </div>
         )
